@@ -1,0 +1,241 @@
+# Build every target and attach the binaries to a release.
+#
+# A friend must never need Rust. Installing the toolchain on Windows means MSVC
+# build tools - gigabytes and several dialogs - and anyone who hits that stops
+# before they run the tool. Rust is how we build it, never how they get it.
+#
+# Cross-compiling all five targets from one laptop is not realistic (Windows
+# needs MSVC, Linux needs a cross linker), so the matrix runs on native runners.
+# That also makes a release reproducible rather than "whatever was on the
+# maintainer's machine".
+
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            os: macos-14
+            name: anomalift-macos-arm64
+          # Cross-compiled from the arm64 runner: GitHub has retired the
+          # Intel `macos-13` image, and a job targeting it sits in `queued`
+          # for ever rather than failing. The macOS SDK is a fat SDK, so
+          # `--target x86_64-apple-darwin` links here without a cross linker.
+          - target: x86_64-apple-darwin
+            os: macos-14
+            name: anomalift-macos-x86_64
+          # musl so a glibc version mismatch can never bite a user on an older
+          # distro - the classic "GLIBC_2.34 not found" support ticket.
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            name: anomalift-linux-x86_64
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-latest
+            name: anomalift-linux-arm64
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            name: anomalift-windows-x86_64
+            ext: .exe
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross linker (musl)
+        if: contains(matrix.target, 'musl')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+          if [ "${{ matrix.target }}" = "aarch64-unknown-linux-musl" ]; then
+            sudo apt-get install -y gcc-aarch64-linux-gnu
+            echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
+          fi
+
+      # `--remap-path-prefix` because `trim-paths` is still unstable in this
+      # Cargo. Without it the shipped binary carries the absolute path of every
+      # dependency source file in its panic locations - which on a laptop build
+      # means publishing the maintainer's home directory name, and either way
+      # makes the artifact depend on where the source happened to sit.
+      - name: Build
+        shell: bash
+        run: |
+          RUSTFLAGS="--remap-path-prefix=$HOME=/build --remap-path-prefix=$PWD=/src" \
+            cargo build --release --target ${{ matrix.target }}
+
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin="target/${{ matrix.target }}/release/anomalift${{ matrix.ext }}"
+          test -f "$bin"
+          mkdir -p dist
+          cp "$bin" "dist/${{ matrix.name }}${{ matrix.ext }}"
+          cd dist
+          # Checksums are what the installers verify. Without them a hijacked
+          # download is undetectable, and `curl | sh` already asks for trust.
+          if command -v shasum >/dev/null; then
+            shasum -a 256 "${{ matrix.name }}${{ matrix.ext }}" > "${{ matrix.name }}.sha256"
+          else
+            sha256sum "${{ matrix.name }}${{ matrix.ext }}" > "${{ matrix.name }}.sha256"
+          fi
+
+      - name: Smoke test the binary we are about to ship
+        # Only where the runner can execute what it built. An artifact that has
+        # never been run once is not a release candidate - but an arm64 runner
+        # cannot run an x86_64 build (no Rosetta on the hosted images), and a
+        # musl arm64 build has no arm64 Linux runner at all.
+        if: "!contains(matrix.target, 'aarch64-unknown-linux') && matrix.target != 'x86_64-apple-darwin'"
+        shell: bash
+        run: |
+          ./dist/${{ matrix.name }}${{ matrix.ext }} --version
+          ./dist/${{ matrix.name }}${{ matrix.ext }} --help > /dev/null
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: dist/*
+
+  # A tag whose name disagrees with the version compiled into the binary would
+  # publish npm 0.1.2 wrapping a binary that reports 0.1.1 - and nothing else in
+  # the pipeline compares those two. The npm manifests are rewritten from the
+  # tag, so they always agree with each other and prove nothing.
+  version:
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tag must match Cargo.toml
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#v}"
+          crate=$(grep -m1 '^version = ' crates/anomalift/Cargo.toml | cut -d'"' -f2)
+          if [ "$tag" != "$crate" ]; then
+            echo "tag v$tag does not match crates/anomalift/Cargo.toml ($crate)" >&2
+            exit 1
+          fi
+          echo "version $crate"
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - run: cargo test --all
+      - run: cargo clippy --all -- -D warnings
+      # The end-to-end suite drives the real binary in a throwaway $HOME. Half
+      # its cases assert the tool finds *nothing*, which the unit tests cannot.
+      - run: cargo build
+      - run: ./scripts/e2e.sh ./target/debug/anomalift
+
+  release:
+    needs: [build, test, version]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Collect
+        run: |
+          mkdir -p dist
+          find artifacts -type f -exec cp {} dist/ \;
+          cat dist/*.sha256 > dist/SHA256SUMS
+          ls -la dist
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          fail_on_unmatched_files: true
+          body: |
+            Install:
+
+            **macOS / Linux**
+            ```
+            curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | sh
+            ```
+
+            **Windows (PowerShell)**
+            ```
+            irm https://raw.githubusercontent.com/${{ github.repository }}/main/install.ps1 | iex
+            ```
+
+            **With Node**
+            ```
+            npx anomalift
+            ```
+
+            Binaries are unsigned. macOS will warn that the developer cannot be
+            verified; see BETA.md for the exact dialog and how to proceed.
+
+  # Publish the same artifacts to npm, so `npx anomalift` works for anyone with
+  # Node and nothing else. Skipped silently when no NPM_TOKEN secret is set, so
+  # a release still succeeds on a fork or before the token exists.
+  npm:
+    needs: [release]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    env:
+      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Collect
+        run: |
+          mkdir -p dist
+          find artifacts -type f -name 'anomalift-*' ! -name '*.sha256' -exec cp {} dist/ \;
+          ls -la dist
+      - name: Version the packages from the tag
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          node -e '
+            const fs = require("fs");
+            const v = process.argv[1];
+            const roots = ["npm/package.json", ...require("fs")
+              .readdirSync("npm/platforms")
+              .map(d => `npm/platforms/${d}/package.json`)];
+            for (const f of roots) {
+              const m = JSON.parse(fs.readFileSync(f, "utf8"));
+              m.version = v;
+              if (m.optionalDependencies) {
+                for (const k of Object.keys(m.optionalDependencies)) m.optionalDependencies[k] = v;
+              }
+              fs.writeFileSync(f, JSON.stringify(m, null, 2) + "\n");
+            }
+          ' "$v"
+      # The token is defined as *job* env, which is what makes this work. A
+      # step's `if` is evaluated before that step's own `env:` map exists, so
+      # gating on a step-level env var reads empty even when the secret is set,
+      # and the publish silently skips while the job reports green. `secrets`
+      # is not a valid context in a step `if` at all - using it fails the whole
+      # workflow at parse time, with a run that has no jobs in it.
+      - name: Publish
+        if: ${{ env.NODE_AUTH_TOKEN != '' }}
+        run: ./scripts/npm-release.sh --assets ./dist
+      - name: No token, nothing published
+        if: ${{ env.NODE_AUTH_TOKEN == '' }}
+        run: |
+          echo "NPM_TOKEN is not set; skipping npm publish." >&2
+          ./scripts/npm-release.sh --assets ./dist --dry-run

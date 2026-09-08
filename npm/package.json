@@ -1,0 +1,38 @@
+{
+  "name": "anomalift",
+  "version": "0.1.1",
+  "description": "Find the mistakes your coding agent repeats, and stop them. Wraps a prebuilt binary; no Rust toolchain required.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kailash16dev/Anomalift.git"
+  },
+  "homepage": "https://github.com/kailash16dev/Anomalift#readme",
+  "bugs": {
+    "url": "https://github.com/kailash16dev/Anomalift/issues"
+  },
+  "keywords": [
+    "cli",
+    "claude-code",
+    "coding-agent",
+    "ai-agent",
+    "observability"
+  ],
+  "bin": {
+    "anomalift": "bin/anomalift.js"
+  },
+  "files": [
+    "bin/anomalift.js",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=16"
+  },
+  "optionalDependencies": {
+    "anomalift-darwin-arm64": "0.1.1",
+    "anomalift-darwin-x64": "0.1.1",
+    "anomalift-linux-x64": "0.1.1",
+    "anomalift-linux-arm64": "0.1.1",
+    "anomalift-windows-x64": "0.1.1"
+  }
+}

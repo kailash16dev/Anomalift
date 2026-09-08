@@ -1,0 +1,30 @@
+# Virtual workspace: no root package. `cargo test` at the root then means the
+# same thing as `--workspace`, which the root-package-plus-workspace hybrid
+# quietly breaks.
+[workspace]
+resolver = "2"
+members = ["crates/anomalift"]
+
+[workspace.package]
+edition = "2021"
+rust-version = "1.90"
+license = "Apache-2.0"
+repository = "https://github.com/kailash16dev/Anomalift"
+
+# Pinned once, here, so every crate in the workspace resolves the same version.
+[workspace.dependencies]
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+clap = { version = "4", features = ["derive"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[profile.release]
+# Size matters: every friend downloads this. 12MB before these settings.
+lto = "fat"
+opt-level = "z"
+codegen-units = 1
+panic = "abort"
+strip = true

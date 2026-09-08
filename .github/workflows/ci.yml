@@ -1,0 +1,48 @@
+# Run the checks on every change, not only when a tag is cut.
+#
+# The release workflow tests too, but it only fires on `v*` tags - so nothing
+# gated a push to main or a pull request, and a public repository accepting
+# contributions had no way to tell a good patch from a broken one until release
+# day.
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Read-only. A fork's pull request gets no write access and no secrets, which
+# is what makes it safe to run this on contributions from strangers.
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --all -- -D warnings
+      - run: cargo test --all
+      - run: cargo build
+      # Half of the end-to-end cases assert the tool finds *nothing*, which the
+      # unit tests cannot: they drive the real binary in a throwaway $HOME.
+      - run: ./scripts/e2e.sh ./target/debug/anomalift
+
+  extension:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci --prefix extension || npm install --prefix extension
+      # Compiles, then checks the manifest against the source - view ids
+      # against container ids, contributed commands against registerCommand,
+      # settings against the code that reads them. None of that is TypeScript,
+      # and nothing else in the toolchain compares the two sides.
+      - run: npm run --prefix extension verify

@@ -1,0 +1,49 @@
+# Build output
+target/
+
+# anomalift's own output. `patterns.json` and `learned.json` carry verbatim
+# text from your sessions - ticket titles, task descriptions, file paths - so
+# they are private working data, not source.
+.anomalift/
+
+# Node
+extension/node_modules/
+extension/out/
+extension/*.vsix
+node_modules/
+
+# Local experiment scaffolding. This repository ships one Rust CLI; the
+# measurement harnesses, their datasets and their results are working data,
+# never distributed source, and some of it quotes real repositories.
+eval/
+harness/
+ui/
+run_smallmodel.sh
+pyproject.toml
+uv.lock
+.venv/
+__pycache__/
+*.pyc
+.python-version
+
+# Env
+.env
+.env.local
+*.env
+
+# OS
+.DS_Store
+
+# Retired retrieval engine, kept locally, not part of the shipped workspace.
+crates/cx-core/
+.env.example
+
+# Release binaries staged into the npm packages by scripts/npm-release.sh.
+# Build output, never source - committing one would put a 700KB binary in the
+# tree and let a stale build ship under a fresh version number.
+npm/platforms/*/bin/anomalift
+npm/platforms/*/bin/anomalift.exe
+
+# Registry credentials. Never in the repo - CI reads the token from an
+# encrypted GitHub secret, and a local publish uses the user-level file.
+.npmrc

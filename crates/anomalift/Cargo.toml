@@ -1,0 +1,21 @@
+[package]
+name = "anomalift"
+version = "0.1.1"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Find the mistakes your coding agent repeats, and stop them."
+
+[[bin]]
+name = "anomalift"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

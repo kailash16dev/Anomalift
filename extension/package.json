@@ -1,0 +1,111 @@
+{
+  "name": "anomalift",
+  "displayName": "Anomalift \u2014 turn repeated agent errors into fixes",
+  "description": "Find the mistakes your coding agent repeats, and the rules that stop them.",
+  "version": "0.1.1",
+  "publisher": "anomalift",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kailash16dev/Anomalift.git"
+  },
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "anomalift",
+          "title": "Agent failures",
+          "icon": "resources/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "anomalift": [
+        {
+          "id": "anomalift.patterns",
+          "name": "Repeated failures",
+          "contextualTitle": "Agent failures"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "anomalift.patterns",
+        "contents": "No failure patterns yet.\n\nAnomalift reads Claude Code sessions from ~/.claude/projects \u2014 the CLI and this editor's extension share that store.\n\n[Scan sessions](command:anomalift.refresh)\n\nIf scanning fails, anomalift is probably not on your PATH.\n[Set the anomalift path](command:anomalift.configure)"
+      }
+    ],
+    "commands": [
+      {
+        "command": "anomalift.refresh",
+        "title": "anomalift: Scan sessions for repeated failures",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "anomalift.configure",
+        "title": "anomalift: Set path to the anomalift binary"
+      },
+      {
+        "command": "anomalift.copyRule",
+        "title": "anomalift: Copy rule for CLAUDE.md",
+        "icon": "$(clippy)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "anomalift.refresh",
+          "when": "view == anomalift.patterns",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "anomalift.copyRule",
+          "when": "viewItem == anomaliftPatternWithRule",
+          "group": "inline"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "anomalift",
+      "properties": {
+        "anomalift.path": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the anomalift binary. Leave empty to search PATH and the workspace target directory."
+        },
+        "anomalift.sessions": {
+          "type": "number",
+          "default": 120,
+          "minimum": 1,
+          "description": "How many recent sessions to scan."
+        },
+        "anomalift.scanOnStartup": {
+          "type": "boolean",
+          "default": false,
+          "description": "Scan when the window opens. Off by default: scanning reads every transcript, and doing that unasked on a large history is rude."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "verify": "npm run compile && node verify.js && node smoke.js",
+    "smoke": "node smoke.js",
+    "vscode:prepublish": "npm run compile"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.90.0",
+    "typescript": "^5.7.0"
+  }
+}
