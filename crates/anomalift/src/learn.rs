@@ -71,6 +71,28 @@ const REMEDIES: &[Remedy] = &[
         applies_to: &["Read:"],
         advice: "Check a path is a file before reading it; use `ls` or `Glob` for directories.",
     },
+    // `Read` refuses calls for unrelated reasons under one `Read:` head, so the
+    // needles below split them the same way the `Grep` ones do. A size refusal
+    // means the call was well-formed and the file is too big; a parse refusal
+    // means the arguments never became JSON and `Read` never ran at all. One
+    // needle over both would give half the failures the wrong half's fix.
+    Remedy {
+        needle: "exceeds maximum allowed size",
+        applies_to: &["Read:"],
+        advice: "Read a large file in slices - pass `offset` and `limit`, or find the lines \
+                 with `Grep` first. A file over the size cap is refused before it is opened, \
+                 so re-issuing the same `Read` cannot succeed.",
+    },
+    // Every occurrence of this on the machine it came from was a Windows path.
+    // A backslash is an escape character in JSON, so `C:\Users` encodes `\U`,
+    // which is not a valid escape and the whole argument object fails to parse.
+    Remedy {
+        needle: "input that could not be parsed",
+        applies_to: &["Read:"],
+        advice: "Double every backslash in a Windows `file_path` (`C:\\\\Users\\\\me\\\\file.md`) \
+                 or write the path with forward slashes: a lone `\\` is an invalid JSON escape, \
+                 so the call is rejected before `Read` sees the path at all.",
+    },
     // Split deliberately. `Grep` reports every ripgrep rejection with the same
     // "ripgrep rejected the pattern, glob, or file type" preamble, so a needle
     // on the preamble matches an unknown `--type` value, an unknown flag and a
@@ -84,6 +106,20 @@ const REMEDIES: &[Remedy] = &[
                  `rg --type-list` is the full set; for anything not in it use \
                  `glob` (e.g. `*.tsx`) instead.",
     },
+    // Ahead of the general `regex parse error` entry below, which `find` would
+    // otherwise reach first, because look-around is not a syntax mistake and
+    // the general advice is actively wrong for it. Escaping is the fix when a
+    // metacharacter was meant literally; here the pattern is exactly what the
+    // author intended and ripgrep's default engine simply has no such feature,
+    // so there is nothing to escape and no spelling of it that parses.
+    Remedy {
+        needle: "look-around",
+        applies_to: &["Grep:"],
+        advice: "Drop look-around (`(?!...)`, `(?<=...)`) from `Grep` patterns: ripgrep's \
+                 default engine does not implement it and `Grep` has no PCRE2 switch. \
+                 Match without the assertion and filter the hits, or run \
+                 `rg --pcre2 '<pattern>'` through `Bash`.",
+    },
     Remedy {
         needle: "regex parse error",
         applies_to: &["Grep:"],
@@ -94,6 +130,54 @@ const REMEDIES: &[Remedy] = &[
         needle: "no such file or directory",
         applies_to: &["Bash: (eval):cd:", "Bash: cd:"],
         advice: "Confirm a directory exists before `cd`; prefer absolute paths in `Bash`.",
+    },
+    // Windows ships stub `python.exe`/`python3.exe` App Execution Aliases in
+    // `%LOCALAPPDATA%\Microsoft\WindowsApps`, which is on PATH by default and
+    // usually ahead of a real install. The stub prints this and exits, so the
+    // failure repeats on a machine where Python *is* installed and working.
+    Remedy {
+        needle: "python was not found",
+        applies_to: &["Bash:"],
+        advice: "On Windows run Python as `py` (or the venv's `.venv\\Scripts\\python.exe`), \
+                 never bare `python`: the `python` first on PATH is the Microsoft Store App \
+                 Execution Alias, a stub that prints this and exits without an interpreter.",
+    },
+    // Needle is the *shape* of the mistake rather than any one flag: a pathspec
+    // starting with `-` can only be an option git stopped parsing. Split from
+    // the plain `did not match any file(s)` case on purpose - that one means the
+    // file is missing, which is a different problem with a different fix. `N` is
+    // what `signature` leaves of the `:(prefix:19)` magic.
+    Remedy {
+        needle: ":(prefix:n)-",
+        applies_to: &["Bash: error: pathspec"],
+        advice: "Put `git` options before `--`, never after: everything following `--` is a \
+                 pathspec, so `git stash -- -m wip` asks git for a file named `-m`. Write \
+                 `git stash push -m wip`.",
+    },
+    // Both of `AskUserQuestion`'s arrays cap at 4, so one line covers either
+    // violation. Matched on `"origin": "array"` as well as the code, because a
+    // `too_big` on the 12-character `header` is a string, not an array, and
+    // trimming the option list would not fix it.
+    //
+    // This needs the validation body to reach the signature. The refusal is
+    // pretty-printed JSON whose first line is only `InputValidationError: [`,
+    // and a `signature` that signs a multi-line error with its first marked
+    // line alone leaves every `AskUserQuestion` rejection - too many options,
+    // a header too long, a missing field - under that one head. Then the cause
+    // is not in the signature, nothing here can match on it, and the honest
+    // result is no rule rather than one rule for all of them.
+    Remedy {
+        needle: "\"origin\": \"array\", \"code\": \"too_big\"",
+        applies_to: &["AskUserQuestion:"],
+        advice: "Keep `AskUserQuestion` inside its caps - at most 4 questions per call, each \
+                 with 2 to 4 options. Ask the rest in a follow-up call rather than resending \
+                 the same oversized list.",
+    },
+    Remedy {
+        needle: "`prompt` is required",
+        applies_to: &["ScheduleWakeup:"],
+        advice: "Give `ScheduleWakeup` a `prompt` saying what to do on waking; only a call \
+                 that passes `stop: true` may leave it out.",
     },
 ];
 
@@ -370,6 +454,127 @@ mod tests {
             let pats = patterns(&sessions);
             let rule = rule_for(recurring(&pats)[0]).expect("a rule for a known cause");
             assert!(rule.contains(expected), "wrong remedy: {rule}");
+        }
+    }
+
+    /// A pattern carrying only what `rule_for` reads.
+    ///
+    /// Built from the signature directly rather than from raw error text, so
+    /// these tests pin the remedy table and not `signature`'s normalisation.
+    fn pattern(signature: &str) -> Pattern {
+        Pattern {
+            signature: signature.into(),
+            tool: signature.split(':').next().unwrap_or_default().into(),
+            count: MIN_OCCURRENCES,
+            sessions: MIN_SESSIONS,
+            examples: Vec::new(),
+            queries: Vec::new(),
+            first_seen: 0,
+            last_seen: 0,
+        }
+    }
+
+    /// Signatures copied verbatim off a real machine - a Windows one, running
+    /// somebody else's project - against the fix each is supposed to draw.
+    ///
+    /// The table matched none of these on its first contact with a history it
+    /// had not been written against, which is the whole reason they are here.
+    #[test]
+    fn signatures_from_the_field_reach_their_own_remedy() {
+        let cases: &[(&str, &str)] = &[
+            (
+                "Read: <tool_use_error>InputValidationError: Read was called with input that could not be parsed as JS",
+                "invalid JSON escape",
+            ),
+            (
+                "Read: File content (N.NKB) exceeds maximum allowed size (NKB). Use offset and limit parameters to rea",
+                "`offset` and `limit`",
+            ),
+            (
+                "Bash: Python was not found; run without arguments to install from the Microsoft Store, or disable thi",
+                "App Execution Alias",
+            ),
+            (
+                "Bash: error: pathspec ':(prefix:N)-m' did not match any file(s) known to git",
+                "options before `--`",
+            ),
+            (
+                "Grep: rg: regex parse error: (?:Invoice(?!.*Silver)|invoice) ^^^ error: look-around, including look-a",
+                "rg --pcre2",
+            ),
+            (
+                "AskUserQuestion: <tool_use_error>InputValidationError: [ { \"origin\": \"array\", \"code\": \"too_big\", \"maximum\": N, \"path\": [\"question",
+                "at most 4 questions",
+            ),
+            (
+                "ScheduleWakeup: `prompt` is required when `stop` is not true.",
+                "`stop: true`",
+            ),
+        ];
+        for (sig, expected) in cases {
+            let rule = rule_for(&pattern(sig)).unwrap_or_else(|| panic!("no remedy for {sig}"));
+            assert!(rule.contains(expected), "wrong remedy for {sig}: {rule}");
+        }
+    }
+
+    #[test]
+    fn look_around_is_not_told_to_escape_something() {
+        // It shares "regex parse error" with every other rejected pattern, and
+        // the general advice there - escape the metacharacters - is not merely
+        // unhelpful but false: ripgrep's default engine has no look-around at
+        // all, so no escaping of `(?!...)` makes it parse.
+        let lookaround = pattern(
+            "Grep: rg: regex parse error: (?:Invoice(?!.*Silver)|invoice) ^^^ error: look-around, including look-a",
+        );
+        let syntax = pattern("Grep: rg: regex parse error: unclosed character class");
+        let a = rule_for(&lookaround).expect("a rule for look-around");
+        assert!(
+            !a.contains("escape"),
+            "escaping cannot fix look-around: {a}"
+        );
+        // The general entry still serves the causes it was written for.
+        assert!(rule_for(&syntax).unwrap().contains("escape regex"));
+    }
+
+    #[test]
+    fn remedies_do_not_leak_across_tools_or_causes() {
+        // Each of these shares a needle, or nearly, with an entry above and
+        // must still come back empty.
+        for sig in [
+            // A pathspec that does not start with `-` is a missing file, not a
+            // misplaced flag, and "put options before `--`" would be nonsense.
+            "Bash: error: pathspec 'srcPATH' did not match any file(s) known to git",
+            // The JSON-escape advice is about `Read`'s `file_path`.
+            "Edit: <tool_use_error>InputValidationError: Edit was called with input that could not be parsed as JS",
+            // A `too_big` on the 12-character `header` is a string, not an
+            // array, so trimming the option list would not fix it.
+            "AskUserQuestion: <tool_use_error>InputValidationError: [ { \"origin\": \"string\", \"code\": \"too_big\", \"maximum\": N",
+        ] {
+            assert_eq!(rule_for(&pattern(sig)), None, "leaked a remedy for {sig}");
+        }
+    }
+
+    /// Recurring, real, and deliberately left without a rule.
+    ///
+    /// Each is a case where the signature does not determine the fix, so any
+    /// line written for it would be a guess standing in `CLAUDE.md` on every
+    /// future turn. Listed as a test so the omissions stay deliberate.
+    #[test]
+    fn patterns_whose_cause_is_undetermined_stay_unremedied() {
+        for sig in [
+            // A deprecation warning on stderr that happens to precede the real
+            // traceback. Eight unrelated Python failures cluster here, and the
+            // only advice the text supports - "import pymupdf" - is about the
+            // user's own code, not about how the agent used a tool.
+            "Bash: warning: The `fitz` API is deprecated and will be removed in future. Use `import pymupdf` inste",
+            // A timeout is a property of the tree being searched, not of the
+            // call. "Narrow the path" is a guess; so is "retry".
+            "Glob: Ripgrep search timed out after N seconds. The search may have matched files but did not complet",
+            // Stale content, wrong file, whitespace, an invisible character -
+            // one message, several causes, no single fix.
+            "Edit: <tool_use_error>String to replace not found in file.",
+        ] {
+            assert_eq!(rule_for(&pattern(sig)), None, "invented a rule for {sig}");
         }
     }
 

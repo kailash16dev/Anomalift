@@ -320,10 +320,12 @@ Nothing else on your machine is modified. Transcripts are read, never written.
   conversations in an undocumented SQLite blob that changes between releases.
   A reader written against a guessed format appears to work and silently drops
   data.
-- **Six remedies.** The table of known fixes covers unknown `Grep` file types,
-  malformed search regexes, `git show` flag conflicts, unknown git revisions,
-  `Read` on a directory, and `cd` into a missing path. Everything else is
-  reported and left to you to word.
+- **Fourteen remedies.** The table of known fixes covers unknown `Grep` file
+  types, malformed search regexes, unsupported look-around, `git show` flag
+  conflicts, git options placed after `--`, unknown git revisions, `Read` on a
+  directory, `Read` past the size limit, unescaped Windows paths in a `Read`
+  call, the Windows Store `python` alias, and a few tool-schema mistakes.
+  Everything else is reported and left to you to word.
 - **Rules are project-local, patterns are not.** The scan reads every project's
   sessions unless you pass `--project`, but `apply` writes to the `CLAUDE.md` in
   your current directory. If you want per-project rules, pass `--project`.
