@@ -259,26 +259,10 @@ send it. See [BETA.md](BETA.md) for exactly what is and is not in it.
 
 ---
 
-## Two other surfaces
+## One other surface
 
-Both are optional. The four-command loop above does not need either.
+Optional. The four-command loop above does not need it.
 
-- **`anomalift hook`** reads a Claude Code `PostToolUseFailure` payload as JSON
-  on stdin and appends one record to `.anomalift/observed.jsonl`. It runs inside
-  every failing tool call, so it prints nothing, blocks on nothing, and exits 0
-  whatever goes wrong — including on malformed input. Transcripts stay the
-  source of truth for `anomalift`, `effect` and `share`; the log is a durable
-  second record that survives transcript rotation, and it is kept separate
-  rather than merged, because counting the same failure from both sources would
-  inflate the very rates this tool exists to measure. Wiring it into your Claude
-  Code settings is a separate, deliberate step; the CLI does not install itself.
-  In `~/.claude/settings.json`:
-
-  ```json
-  { "hooks": { "PostToolUseFailure": [
-      { "hooks": [{ "type": "command", "command": "anomalift hook" }] }
-  ] } }
-  ```
 - **`anomalift mcp`** runs an MCP server (JSON-RPC 2.0 over stdio) exposing
   three tools, so the agent can consult its own failure history at the moment
   of a tool call rather than relying on a `CLAUDE.md` line read at session
@@ -302,7 +286,6 @@ Relative to the rules file (`./CLAUDE.md` unless `--file` says otherwise):
 | `CLAUDE.md.anomalift-backup-<unix>` | `apply`, `forget` | the file exactly as it was before the write |
 | `.anomalift/learned.json` | `apply`, `forget`, `effect` | frozen baselines, rules, controls, and a dated measurement per run |
 | `.anomalift/patterns.json` | the scan | derived cache, for `mcp` |
-| `.anomalift/observed.jsonl` | `hook` | append-only failure log |
 | `./anomalift-report.md` | `share` | the redacted report (`--out` to change) |
 
 `.anomalift/learned.json` is pretty-printed on purpose: it is a file you may

@@ -1,5 +1,4 @@
 mod effect;
-mod hook;
 mod learn;
 mod mcp;
 mod model;
@@ -53,22 +52,6 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Record one tool failure, read as a JSON hook payload on stdin.
-    ///
-    /// Wired to Claude Code's `PostToolUseFailure` event, this appends to
-    /// `.anomalift/observed.jsonl`. It runs inside every failing tool call, so
-    /// it prints nothing, blocks on nothing, and exits 0 whatever goes wrong.
-    ///
-    /// Nothing reads that log yet: the scan still works from transcripts, and
-    /// merging the two sources without deduplication would double-count every
-    /// failure recorded in both. Installing the hook is a separate, deliberate
-    /// step - this subcommand only records.
-    Hook {
-        /// Rules file whose `.anomalift/` directory receives the record.
-        /// Defaults to the session's own `cwd`, taken from the payload.
-        #[arg(long)]
-        file: Option<PathBuf>,
-    },
     /// Run as an MCP server so the agent can consult failures at the moment of
     /// a tool call, rather than relying on a rule read at session start.
     Mcp {
@@ -262,12 +245,6 @@ fn main() -> Result<()> {
         json: cli.json,
     });
     match command {
-        Command::Hook { file } => {
-            // Nothing may escape this arm: no `?`, no output, no non-zero exit.
-            // A hook that fails loudly degrades every turn of the session it is
-            // meant to be quietly learning from.
-            hook::run(file);
-        }
         Command::Mcp { file } => {
             mcp::Server::new(rules_path(file)).serve()?;
         }

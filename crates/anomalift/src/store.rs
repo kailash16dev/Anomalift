@@ -180,27 +180,6 @@ impl Store {
             .join("patterns.json")
     }
 
-    /// Where live failure capture appends, beside the store.
-    ///
-    /// A third file rather than a corner of `learned.json`, deliberately. That
-    /// file holds frozen baselines and is rewritten wholesale by `anomalift
-    /// apply`; a hook firing during a rewrite would either be lost or would
-    /// clobber a baseline, and losing a baseline is the one failure this crate
-    /// cannot recover from. `patterns.json` is likewise a derived cache the
-    /// scan overwrites. Observations are neither - they are append-only
-    /// evidence - so they get their own file with its own write discipline.
-    ///
-    /// `.jsonl`, not `.json`, because the contents genuinely are one JSON
-    /// object per line rather than an array. See `hook` for why that format is
-    /// the concurrency answer; the extension should not lie about it.
-    pub fn observed_path_for(rules_file: &Path) -> PathBuf {
-        rules_file
-            .parent()
-            .unwrap_or(Path::new("."))
-            .join(".anomalift")
-            .join("observed.jsonl")
-    }
-
     pub fn get(&self, signature: &str) -> Option<&LearnedRule> {
         self.rules.iter().find(|r| r.signature == signature)
     }
