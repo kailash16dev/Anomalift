@@ -320,7 +320,7 @@ Nothing else on your machine is modified. Transcripts are read, never written.
   conversations in an undocumented SQLite blob that changes between releases.
   A reader written against a guessed format appears to work and silently drops
   data.
-- **Fourteen remedies.** The table of known fixes covers unknown `Grep` file
+- **15 remedies.** The table of known fixes covers unknown `Grep` file
   types, malformed search regexes, unsupported look-around, `git show` flag
   conflicts, git options placed after `--`, unknown git revisions, `Read` on a
   directory, `Read` past the size limit, unescaped Windows paths in a `Read`

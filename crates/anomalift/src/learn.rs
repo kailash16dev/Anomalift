@@ -55,12 +55,16 @@ struct Remedy {
 const REMEDIES: &[Remedy] = &[
     Remedy {
         needle: "ambiguous argument",
-        applies_to: &["Bash: fatal:", "Bash: exit"],
+        applies_to: &["Bash: fatal:"],
         advice: "Check a git ref exists (`git cat-file -e <ref>`) before `git show`/`git log`; \
                  an unknown revision fails with `exit 128: ambiguous argument`.",
     },
     Remedy {
-        needle: "cannot be used together",
+        // Named flags, not the generic complaint. `git fetch --depth
+        // --unshallow`, `git log --reverse --walk-reflogs` and
+        // `git commit -a --interactive` all end in "cannot be used together",
+        // and all of them were being handed advice about `git show`.
+        needle: "'-s' cannot be used together",
         applies_to: &["Bash: fatal:"],
         advice: "Do not combine `--name-only`/`--name-status` with `-s` in `git show`; \
                  `-s` suppresses the diff that `--name-only` asks for. Use \
@@ -86,12 +90,15 @@ const REMEDIES: &[Remedy] = &[
     // Every occurrence of this on the machine it came from was a Windows path.
     // A backslash is an escape character in JSON, so `C:\Users` encodes `\U`,
     // which is not a valid escape and the whole argument object fails to parse.
+    // The signature clips before the offending input appears, so this needle
+    // covers every cause of an unparseable Read call, on every platform. The
+    // advice names the likeliest cause rather than asserting it.
     Remedy {
         needle: "input that could not be parsed",
         applies_to: &["Read:"],
-        advice: "Double every backslash in a Windows `file_path` (`C:\\\\Users\\\\me\\\\file.md`) \
-                 or write the path with forward slashes: a lone `\\` is an invalid JSON escape, \
-                 so the call is rejected before `Read` sees the path at all.",
+        advice: "Check `file_path` is valid JSON - most often a Windows path whose \
+                 backslashes are unescaped, since a lone backslash is not a valid JSON \
+                 escape. Double them, or use forward slashes.",
     },
     // Split deliberately. `Grep` reports every ripgrep rejection with the same
     // "ripgrep rejected the pattern, glob, or file type" preamble, so a needle
@@ -120,11 +127,24 @@ const REMEDIES: &[Remedy] = &[
                  Match without the assertion and filter the hits, or run \
                  `rg --pcre2 '<pattern>'` through `Bash`.",
     },
+    // Two needles, matching what actually reaches the signature. ripgrep spells
+    // a regex error across several lines and the *last* one names the cause, so
+    // "regex parse error" - the head - never survives clustering. The advice
+    // also used to name `-F` and `output_mode`, and `Grep` has no fixed-string
+    // parameter at all: an agent following that got an InputValidationError on
+    // top of the failure it was already having.
     Remedy {
-        needle: "regex parse error",
-        applies_to: &["Grep:"],
-        advice: "Prefer literal search (`-F`, or `output_mode` with a plain string) and \
-                 escape regex metacharacters (`{}`, `[]`, `+`) when searching for code.",
+        needle: "unclosed",
+        applies_to: &["Grep: error:"],
+        advice: "Escape regex metacharacters in `Grep` patterns - `[`, `(`, `{` each open a \
+                 group ripgrep expects you to close. Search for a plain substring when the \
+                 text is meant literally.",
+    },
+    Remedy {
+        needle: "repetition",
+        applies_to: &["Grep: error:"],
+        advice: "Escape `{` and `+` in `Grep` patterns unless a repetition is intended; \
+                 ripgrep reads `{2,1}` and a bare `{` as counts, not as literal braces.",
     },
     Remedy {
         needle: "no such file or directory",
@@ -136,7 +156,11 @@ const REMEDIES: &[Remedy] = &[
     // usually ahead of a real install. The stub prints this and exits, so the
     // failure repeats on a machine where Python *is* installed and working.
     Remedy {
-        needle: "python was not found",
+        // The Store stub's exact phrasing. Plain "python was not found"
+        // also matches autoconf ("configure: error: Python was not found,
+        // please install python >= 3.8"), which has nothing to do with
+        // Windows execution aliases.
+        needle: "python was not found; run without arguments",
         applies_to: &["Bash:"],
         advice: "On Windows run Python as `py` (or the venv's `.venv\\Scripts\\python.exe`), \
                  never bare `python`: the `python` first on PATH is the Microsoft Store App \
@@ -444,12 +468,14 @@ mod tests {
             "Search failed - ripgrep rejected the pattern, glob, or file type without \
              searching: rg: unrecognized file type: tsx",
         );
+        // Verbatim shape from ripgrep 14: the cause is the last line, several
+        // lines below the "regex parse error" head. A needle on the head looks
+        // right in a unit test and never fires on real output.
         let bad_regex = (
             "Grep",
-            "Search failed - ripgrep rejected the pattern: rg: regex parse error: unclosed \
-             character class",
+            "Search failed - ripgrep rejected the pattern: rg: regex parse error:\n                 [abc\n    ^\nerror: unclosed character class",
         );
-        for (err, expected) in [(bad_type, "--type-list"), (bad_regex, "escape regex")] {
+        for (err, expected) in [(bad_type, "--type-list"), (bad_regex, "Escape regex")] {
             let sessions: Vec<_> = (0..3).map(|i| session(&i.to_string(), i, &[err])).collect();
             let pats = patterns(&sessions);
             let rule = rule_for(recurring(&pats)[0]).expect("a rule for a known cause");
@@ -484,7 +510,7 @@ mod tests {
         let cases: &[(&str, &str)] = &[
             (
                 "Read: <tool_use_error>InputValidationError: Read was called with input that could not be parsed as JS",
-                "invalid JSON escape",
+                "valid JSON",
             ),
             (
                 "Read: File content (N.NKB) exceeds maximum allowed size (NKB). Use offset and limit parameters to rea",
@@ -499,7 +525,7 @@ mod tests {
                 "options before `--`",
             ),
             (
-                "Grep: rg: regex parse error: (?:Invoice(?!.*Silver)|invoice) ^^^ error: look-around, including look-a",
+                "Grep: error: look-around, including look-ahead and look-behind, is not supported",
                 "rg --pcre2",
             ),
             (
@@ -524,16 +550,13 @@ mod tests {
         // unhelpful but false: ripgrep's default engine has no look-around at
         // all, so no escaping of `(?!...)` makes it parse.
         let lookaround = pattern(
-            "Grep: rg: regex parse error: (?:Invoice(?!.*Silver)|invoice) ^^^ error: look-around, including look-a",
+            "Grep: error: look-around, including look-ahead and look-behind, is not supported",
         );
-        let syntax = pattern("Grep: rg: regex parse error: unclosed character class");
+        let syntax = pattern("Grep: error: unclosed character class");
         let a = rule_for(&lookaround).expect("a rule for look-around");
-        assert!(
-            !a.contains("escape"),
-            "escaping cannot fix look-around: {a}"
-        );
-        // The general entry still serves the causes it was written for.
-        assert!(rule_for(&syntax).unwrap().contains("escape regex"));
+        assert!(!a.contains("scape"), "escaping cannot fix look-around: {a}");
+        // The syntax entries still serve the causes they were written for.
+        assert!(rule_for(&syntax).unwrap().contains("Escape regex"));
     }
 
     #[test]

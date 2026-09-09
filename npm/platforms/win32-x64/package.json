@@ -1,6 +1,6 @@
 {
   "name": "anomalift-windows-x64",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "anomalift binary for Windows on x86-64, and on arm64 under the OS's x64 emulation. Installed automatically as an optional dependency of `anomalift`; not useful on its own.",
   "license": "Apache-2.0",
   "repository": {

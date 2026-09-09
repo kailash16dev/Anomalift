@@ -1,6 +1,6 @@
 {
   "name": "anomalift-linux-arm64",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "anomalift binary for Linux on arm64. Installed automatically as an optional dependency of `anomalift`; not useful on its own.",
   "license": "Apache-2.0",
   "repository": {

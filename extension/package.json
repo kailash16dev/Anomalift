@@ -2,7 +2,7 @@
   "name": "anomalift",
   "displayName": "Anomalift \u2014 turn repeated agent errors into fixes",
   "description": "Find the mistakes your coding agent repeats, and the rules that stop them.",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "publisher": "anomalift",
   "license": "Apache-2.0",
   "repository": {

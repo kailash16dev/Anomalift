@@ -92,7 +92,12 @@ const ERROR_MARKERS: &[&str] = &[
 /// is well-formed and meaningless.
 pub fn signature(tool: &str, error: &str) -> Option<String> {
     let lower = error.to_ascii_lowercase();
-    if NOT_AGENT_FAULT.iter().any(|p| lower.contains(p)) {
+    // Anchored to the first line, not searched for anywhere in the capture. A
+    // refusal *is* the message; a command whose output happens to quote one -
+    // a 403 body, or this tool's own audience grepping their transcripts for
+    // "<tool_use_error>Blocked:" - is a real failure that must still cluster.
+    let first_line = lower.lines().next().unwrap_or("").trim();
+    if NOT_AGENT_FAULT.iter().any(|p| first_line.starts_with(p)) {
         return None;
     }
 
@@ -224,7 +229,38 @@ fn normalise(s: &str) -> String {
     let mut chars = s.chars().peekable();
     while let Some(c) = chars.next() {
         match c {
+            // A Windows path: `C:\Users\me\file`. Without this the same failure
+            // under two home directories signs as two patterns, which on
+            // Windows is most of them - and the username stays in the
+            // signature, and so in the local pattern cache.
+            c if c.is_ascii_alphabetic() && chars.peek() == Some(&':') && {
+                let mut probe = chars.clone();
+                probe.next();
+                matches!(probe.peek(), Some('\\') | Some('/'))
+            } =>
+            {
+                out.push_str("PATH");
+                chars.next();
+                while let Some(&n) = chars.peek() {
+                    if n.is_whitespace() || n == '\'' || n == '"' || n == ',' {
+                        break;
+                    }
+                    chars.next();
+                }
+            }
             // An absolute or relative path: everything to the next separator.
+            '\\' if chars
+                .peek()
+                .is_some_and(|n| n.is_ascii_alphanumeric() || *n == '\\') =>
+            {
+                out.push_str("PATH");
+                while let Some(&n) = chars.peek() {
+                    if n.is_whitespace() || n == ':' || n == '\'' || n == '"' || n == ',' {
+                        break;
+                    }
+                    chars.next();
+                }
+            }
             '/' => {
                 out.push_str("PATH");
                 while let Some(&n) = chars.peek() {
@@ -503,6 +539,44 @@ mod tests {
         // signature stays noisy on purpose - a human can still read it.
         let du = "1.2M\t./venv/Lib\n4.0K\t./venv/Scripts\n1.2M\t./venv/Lib/site-packages";
         assert!(signature("Bash", du).is_some());
+    }
+
+    #[test]
+    fn windows_paths_normalise_like_posix_ones() {
+        // Two developers, one bug. Before this, every Windows failure carried
+        // its own home directory into the signature and clustered alone.
+        let a = signature(
+            "Read",
+            "EISDIR: illegal operation on a directory, read 'C:\\Users\\abcom\\proj'",
+        );
+        let b = signature(
+            "Read",
+            "EISDIR: illegal operation on a directory, read 'C:\\Users\\other\\app'",
+        );
+        assert_eq!(a, b);
+        assert!(a.unwrap().contains("EISDIR"));
+        // A bare backslash run is a path too: `\\server\\share`.
+        let unc = signature(
+            "Bash",
+            "cannot open \\\\build01\\\\share\\\\out.log for writing",
+        )
+        .unwrap();
+        assert!(!unc.contains("build01"), "{unc}");
+    }
+
+    #[test]
+    fn a_refusal_quoted_in_output_is_still_a_failure() {
+        // The phrase has to be the message, not something the message quotes.
+        // This tool's own users grep their transcripts for exactly these words.
+        let quoted = signature(
+            "Bash",
+            "rg: matched 3 lines\n  <tool_use_error>Blocked: sleep 60\nerror: exit status 2",
+        );
+        assert!(quoted.is_some(), "a real failure was swallowed");
+        assert_eq!(
+            signature("Bash", "<tool_use_error>Blocked: sleep 60 followed by: ls"),
+            None
+        );
     }
 
     #[test]
